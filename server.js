@@ -202,27 +202,52 @@ app.put('/api/budget', auth, async (req, res) => {
   try {
     const { data: setting } = await supabase
       .from('settings')
-      .select('value')
+      .select('id, value')
       .eq('key', 'monthly_budget')
       .eq('user_id', req.user.id)
       .maybeSingle();
+
     const cur = +(setting?.value || 1250000);
     const v = req.body.add !== undefined ? cur + Number(req.body.add) : Number(req.body.budget);
-    if (!Number.isFinite(v) || v < 0 || v > 1e12) return res.status(400).json({ error: 'Nominal budget tidak valid.' });
+    if (!Number.isFinite(v) || v < 0 || v > 1e12) {
+      return res.status(400).json({ error: 'Nominal budget tidak valid.' });
+    }
 
-    const { data: existing } = await supabase
+    const roundedVal = String(Math.round(v));
+
+    if (setting) {
+      const { error } = await supabase
+        .from('settings')
+        .update({ value: roundedVal })
+        .eq('id', setting.id);
+      if (error) throw error;
+      return res.json({ ok: true, budget: Math.round(v) });
+    }
+
+    let { error } = await supabase
       .from('settings')
-      .select('id')
-      .eq('key', 'monthly_budget')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+      .insert({ user_id: req.user.id, key: 'monthly_budget', value: roundedVal });
 
-    const { error } = existing
-      ? await supabase.from('settings').update({ value: String(Math.round(v)) }).eq('id', existing.id)
-      : await supabase.from('settings').insert({ user_id: req.user.id, key: 'monthly_budget', value: String(Math.round(v)) });
+    if (error && /settings_pkey|duplicate key/i.test(error.message || '')) {
+      const { data: lastRow } = await supabase
+        .from('settings')
+        .select('id')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const nextId = (Number(lastRow?.id) || 0) + 1;
+      const retry = await supabase
+        .from('settings')
+        .insert({ id: nextId, user_id: req.user.id, key: 'monthly_budget', value: roundedVal });
+      error = retry.error;
+    }
+
     if (error) throw error;
     res.json({ ok: true, budget: Math.round(v) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ---------- Split Bill ----------
@@ -439,53 +464,4 @@ app.get('/api/notifications', auth, async (req, res) => {
       supabase.from('bills').select('*'),
       supabase.from('bill_shares').select('*'),
       supabase.from('users').select('id,name'),
-      supabase.from('chores').select('*').eq('user_id', req.user.id).eq('done', 0).eq('date', today()),
-      supabase.from('notif_reads').select('nid').eq('user_id', req.user.id)
-    ]);
-
-    (stocks || []).filter(s => s.qty <= s.min_qty).forEach(s => n.push({
-      id: `stock-${s.id}-${s.qty}`, type: 'stock', level: s.qty === 0 ? 'bad' : 'low', page: 'stok',
-      title: s.qty === 0 ? `${s.name} habis!` : `${s.name} hampir habis`, text: `Tersisa ${s.qty} ${s.unit}. Segera tambahkan ke daftar belanja.`
-    }));
-    (stockOuts || []).forEach(o => n.push({
-      id: `out-${o.id}`, type: 'stock', level: 'bad', final: true, page: 'stok', title: `${o.name} habis!`, text: 'Stok sudah habis. Segera belanja.'
-    }));
-    (laundries || []).forEach(l => {
-      const diff = new Date(l.pickup_at) - Date.now(), name = l.item || 'Laundry', hrs = Math.ceil(diff / 3600e3);
-      if (diff <= 0) n.push({ id: `laundry-${l.id}-ready`, type: 'laundry', level: 'ok', final: true, page: 'laundry', title: `${name} sudah bisa diambil!`, text: 'Waktunya mengambil laundry kamu.' });
-      else if (hrs <= 3) n.push({ id: `laundry-${l.id}-soon`, type: 'laundry', level: 'info', page: 'laundry', title: `${name} siap diambil ${hrs <= 1 ? 'kurang dari 1 jam' : hrs + ' jam'} lagi`, text: 'Siapkan waktu untuk mengambilnya.' });
-    });
-
-    const bMap = Object.fromEntries((bills || []).map(b => [b.id, b])), uMap = Object.fromEntries((users || []).map(u => [u.id, u.name]));
-    (shares || []).filter(s => s.user_id === req.user.id && s.status === 'unpaid').forEach(s => {
-      const b = bMap[s.bill_id]; if (!b) return;
-      const cnt = (shares || []).filter(x => x.bill_id === b.id).length + (b.owner_id != null ? 1 : 0);
-      n.push({ id: `bill-${s.id}`, type: 'bill', level: 'warn', page: 'split', title: `Tagihan ${b.title} belum dibayar`, text: `Bagianmu ${rp(b.amount / cnt)}` });
-    });
-    (shares || []).filter(s => s.status === 'pending' && bMap[s.bill_id]?.owner_id === req.user.id).forEach(s => {
-      const b = bMap[s.bill_id];
-      n.push({ id: `confirm-${s.id}`, type: 'bill', level: 'warn', page: 'split', title: `${uMap[s.user_id] || 'Teman'} sudah bayar ${b.title}`, text: 'Konfirmasi pembayarannya di halaman Split Bill.' });
-    });
-    (chores || []).forEach(c => n.push({ id: `chore-${c.id}`, type: 'chore', level: 'info', page: 'roommate', title: `Piket: ${c.title}`, text: 'Jadwalmu hari ini belum dikerjakan.' }));
-
-    const reads = new Set((readRows || []).map(r => r.nid));
-    res.json(n.map(x => ({ ...x, read: reads.has(x.id) })));
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/notifications/read', auth, async (req, res) => {
-  try {
-    const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).slice(0, 200);
-    if (ids.length) {
-      const { error } = await supabase.from('notif_reads').upsert(ids.map(id => ({ user_id: req.user.id, nid: String(id).slice(0, 80) })), { onConflict: 'user_id,nid', ignoreDuplicates: true });
-      if (error) throw error;
-    }
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-if (!process.env.VERCEL) {
-  app.listen(process.env.PORT || 3000, () => console.log('KosMate jalan di http://localhost:3000'));
-}
-
-module.exports = app;
+      supabase.from('chores').select
