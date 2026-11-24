@@ -295,18 +295,48 @@ app.get('/api/stock', auth, async (_, res) => {
 
 app.get('/api/stock/status', auth, async (_, res) => {
   try {
-    const { data: stockData, error } = await supabase
-      .from('stock')
-      .select('name,qty,min_qty');
-    if (error) throw error;
+    const yesterday = new Date(Date.now() - 864e5).toISOString();
+    const [{ data: outData, error: outErr }, { data: stockData, error: stErr }] = await Promise.all([
+      supabase.from('stock_out').select('name').gte('at', yesterday),
+      supabase.from('stock').select('name,qty,min_qty')
+    ]);
+    if (outErr || stErr) throw outErr || stErr;
 
     const items = stockData || [];
-    const out = items.filter(s => Number(s.qty) <= 0).map(s => s.name);
-    const low = items.filter(s => Number(s.qty) > 0 && Number(s.qty) <= Number(s.min_qty)).map(s => s.name);
+    const activeMap = new Map(
+      items.map(s => [String(s.name || '').trim().toLowerCase(), s])
+    );
+
+    const outFromHistory = (outData || [])
+      .map(o => String(o.name || '').trim())
+      .filter(name => {
+        if (!name) return false;
+        const cur = activeMap.get(name.toLowerCase());
+        return !cur || Number(cur.qty) <= 0;
+      });
+
+    const outFromStock = items
+      .filter(s => Number(s.qty) <= 0)
+      .map(s => String(s.name || '').trim())
+      .filter(Boolean);
+
+    const out = [...new Set([...outFromHistory, ...outFromStock])];
+    const low = items
+      .filter(s => Number(s.qty) > 0 && Number(s.qty) <= Number(s.min_qty))
+      .map(s => String(s.name || '').trim())
+      .filter(Boolean);
+
     const names = [...new Set([...out, ...low])];
 
-    if (out.length) return res.json({ level: 'bad', label: 'Habis', names });
-    if (low.length) return res.json({ level: 'low', label: 'Menipis', names });
+    if (out.length) {
+      return res.json({ level: 'bad', label: 'Habis', names });
+    }
+    if (low.length) {
+      return res.json({ level: 'low', label: 'Menipis', names });
+    }
+    if (items.length === 0) {
+      return res.json({ level: 'empty', label: 'Kosong', names: [] });
+    }
     return res.json({ level: 'ok', label: 'Aman', names: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
