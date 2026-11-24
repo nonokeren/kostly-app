@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
@@ -16,9 +17,14 @@ const toValidDate = (val) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+const publicDir = path.join(__dirname, 'public');
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static('public'));
+app.use(express.static(publicDir));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
+});
 
 const auth = (req, res, next) => {
   try {
