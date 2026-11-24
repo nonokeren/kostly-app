@@ -295,44 +295,38 @@ app.get('/api/stock', auth, async (_, res) => {
 
 app.get('/api/stock/status', auth, async (_, res) => {
   try {
-    const yesterday = new Date(Date.now() - 864e5).toISOString();
-    const [{ data: outData, error: outErr }, { data: stockData, error: stErr }] = await Promise.all([
-      supabase.from('stock_out').select('name').gte('at', yesterday),
-      supabase.from('stock').select('name,qty,min_qty')
-    ]);
-    if (outErr || stErr) throw outErr || stErr;
+    const { data: stockData, error } = await supabase
+      .from('stock')
+      .select('name,qty,min_qty');
+    if (error) throw error;
 
     const items = stockData || [];
-    const activeMap = new Map(
-      items.map(s => [String(s.name || '').trim().toLowerCase(), s])
-    );
 
-    const outFromHistory = (outData || [])
-      .map(o => String(o.name || '').trim())
-      .filter(name => {
-        if (!name) return false;
-        const cur = activeMap.get(name.toLowerCase());
-        return !cur || Number(cur.qty) <= 0;
-      });
+    // Barang yang stoknya 0 di tabel stock dianggap Habis
+    const out = [...new Set(
+      items
+        .filter(s => Number(s.qty) <= 0)
+        .map(s => String(s.name || '').trim())
+        .filter(Boolean)
+    )];
 
-    const outFromStock = items
-      .filter(s => Number(s.qty) <= 0)
-      .map(s => String(s.name || '').trim())
-      .filter(Boolean);
-
-    const out = [...new Set([...outFromHistory, ...outFromStock])];
-    const low = items
-      .filter(s => Number(s.qty) > 0 && Number(s.qty) <= Number(s.min_qty))
-      .map(s => String(s.name || '').trim())
-      .filter(Boolean);
-
-    const names = [...new Set([...out, ...low])];
+    // Barang yang stoknya > 0 tapi <= min_qty dianggap Menipis (bukan Habis)
+    const low = [...new Set(
+      items
+        .filter(s => {
+          const qty = Number(s.qty);
+          const minQty = Number(s.min_qty ?? 2);
+          return qty > 0 && qty <= minQty;
+        })
+        .map(s => String(s.name || '').trim())
+        .filter(Boolean)
+    )];
 
     if (out.length) {
-      return res.json({ level: 'bad', label: 'Habis', names });
+      return res.json({ level: 'bad', label: 'Habis', names: out });
     }
     if (low.length) {
-      return res.json({ level: 'low', label: 'Menipis', names });
+      return res.json({ level: 'low', label: 'Menipis', names: low });
     }
     if (items.length === 0) {
       return res.json({ level: 'empty', label: 'Kosong', names: [] });
