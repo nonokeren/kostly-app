@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kostly — Smart Boarding House</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="toasts"></div>
+
+  <!-- Halaman Login / Register -->
+  <section id="auth" class="auth hidden">
+    <div class="hero">
+      <div class="brand-group">
+        <div class="brand">
+          <div class="logo-svg">
+            <svg viewBox="0 0 64 64" width="38" height="38" fill="none">
+              <path d="M18 22L32 10L46 22" stroke="#5CEEE3" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <rect x="12" y="21" width="40" height="33" rx="9" fill="#153B56" stroke="#5CEEE3" stroke-width="3.5"/>
+              <rect x="17" y="26" width="30" height="8" rx="4" fill="#ffffff"/>
+              <path d="M35 39L55 31L51 47L37 45Z" fill="#5CEEE3"/>
+              <circle cx="44" cy="40" r="3" fill="#153B56"/>
+              <path d="M30 37C28.5 40 28.5 43.5 30 46.5" stroke="#5CEEE3" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span>Kostly</span>
+        </div>
+        <span class="pill-badge"> Smart Living Platform</span>
+      </div>
+
+      <div class="hero-content">
+        <h1 class="hero-title">Smart Living, Smart Spending!</h1>
+        <p class="hero-desc">Nikmati kehidupan kos dan kontrakan yang lebih praktis dan terorganisir bersama Kostly. Kelola kebutuhan harian, atur pengeluaran, dan pantau keuangan dalam satu platform. Bikin urusan tempat tinggal lebih mudah, hidup lebih nyaman, dan pengeluaran tetap terkendali!</p>
+      </div>
+
+      <div class="hero-footer">
+        <div class="hero-quote">⭐ Live Smarter, Spend Better!</div>
+        <div class="chips">
+          <span>💳 Keuangan & Budget</span>
+          <span>🧾 Split Bill Otomatis</span>
+          <span>📦 Stok Harian</span>
+          <span>🧺 Reminder Laundry</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="authform">
+      <div class="card">
+        <h2 id="authTitle">Masuk ke akunmu</h2>
+        <p class="muted">Masukkan detail akun penghuni kos kamu</p>
+
+        <div id="regFields" class="hidden">
+          <label>Nama Lengkap</label>
+          <input id="aName" placeholder="Nama lengkap kamu">
+          <label>Nomor Kamar</label>
+          <input id="aRoom" placeholder="Contoh: Kamar A1">
+        </div>
+
+        <label>Email</label>
+        <input id="aEmail" type="email" placeholder="nama@email.com">
+        <label>Password</label>
+        <input id="aPass" type="password" placeholder="Minimal 8 karakter">
+
+        <div id="authErr" class="err"></div>
+        <button id="authBtn" class="btn primary full">Masuk ke Kostly</button>
+        <p class="muted small center">
+          <span id="authSwitchText">Belum memiliki akun?</span>
+          <a id="authSwitch" href="#">Daftar sekarang</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Aplikasi Utama -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-svg">
+          <svg viewBox="0 0 64 64" width="38" height="38" fill="none">
+            <path d="M18 22L32 10L46 22" stroke="#153B56" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="12" y="21" width="40" height="33" rx="9" fill="#153B56"/>
+            <rect x="17" y="26" width="30" height="8" rx="4" fill="#ffffff"/>
+            <path d="M35 39L55 31L51 47L37 45Z" fill="#5CEEE3"/>
+            <circle cx="44" cy="40" r="3" fill="#153B56"/>
+            <path d="M30 37C28.5 40 28.5 43.5 30 46.5" stroke="#5CEEE3" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span>Kostly</span>
+      </div>
+      <nav id="nav"></nav>
+      <a id="logout" class="navlink logout-link" href="#"><span class="nav-ico">🚪</span>Keluar</a>
+    </aside>
+
+    <main>
+      <header>
+        <div class="row">
+          <span id="todayPill" class="date-pill"></span>
+          <span id="roleBadge" class="badge">member</span>
+        </div>
+        <div class="header-right">
+          <button id="bell" class="bell" title="Notifikasi">
+            🔔<span id="badge" class="badge-n hidden">0</span>
+          </button>
+          <div id="notifPanel" class="panel hidden"></div>
+          <div class="userchip" onclick="goto('profil')">
+            <img id="hdrAvatar" class="avatar" alt="">
+            <span id="userName"></span>
+          </div>
+        </div>
+      </header>
+
+      <div id="view" class="slide-stage"></div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
