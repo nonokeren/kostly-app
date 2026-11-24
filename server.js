@@ -295,38 +295,18 @@ app.get('/api/stock', auth, async (_, res) => {
 
 app.get('/api/stock/status', auth, async (_, res) => {
   try {
-    const yesterday = new Date(Date.now() - 864e5).toISOString();
-    const [{ data: outData, error: outErr }, { data: stockData, error: stErr }] = await Promise.all([
-      supabase.from('stock_out').select('name').gte('at', yesterday),
-      supabase.from('stock').select('name,qty,min_qty')
-    ]);
-    if (outErr || stErr) throw outErr || stErr;
+    const { data: stockData, error } = await supabase
+      .from('stock')
+      .select('name,qty,min_qty');
+    if (error) throw error;
 
-    const currentStockMap = new Map(
-      (stockData || []).map(s => [String(s.name || '').trim().toLowerCase(), s])
-    );
-
-    const out = [...new Set(
-      (outData || [])
-        .map(o => String(o.name || '').trim())
-        .filter(name => {
-          const cur = currentStockMap.get(name.toLowerCase());
-          return !cur || Number(cur.qty) <= 0;
-        })
-    )];
-
-    const low = (stockData || [])
-      .filter(s => Number(s.qty) > 0 && Number(s.qty) <= Number(s.min_qty))
-      .map(s => s.name);
-
+    const items = stockData || [];
+    const out = items.filter(s => Number(s.qty) <= 0).map(s => s.name);
+    const low = items.filter(s => Number(s.qty) > 0 && Number(s.qty) <= Number(s.min_qty)).map(s => s.name);
     const names = [...new Set([...out, ...low])];
 
-    if (out.length) {
-      return res.json({ level: 'bad', label: 'Habis', names });
-    }
-    if (low.length) {
-      return res.json({ level: 'low', label: 'Menipis', names });
-    }
+    if (out.length) return res.json({ level: 'bad', label: 'Habis', names });
+    if (low.length) return res.json({ level: 'low', label: 'Menipis', names });
     return res.json({ level: 'ok', label: 'Aman', names: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -336,9 +316,20 @@ app.get('/api/stock/status', auth, async (_, res) => {
 app.post('/api/stock', auth, async (req, res) => {
   try {
     const { name, category, qty, unit, min_qty } = req.body;
-    if (!clean(name) || !(qty > 0)) return res.status(400).json({ error: 'Nama dan jumlah (lebih dari 0) wajib diisi.' });
-    const { error } = await supabase.from('stock').insert({ name: clean(name), category: clean(category), qty, unit: clean(unit), min_qty: min_qty ?? 2 });
+    const cleanName = clean(name);
+    if (!cleanName || !(qty > 0)) return res.status(400).json({ error: 'Nama dan jumlah (lebih dari 0) wajib diisi.' });
+
+    const { error } = await supabase.from('stock').insert({
+      name: cleanName,
+      category: clean(category),
+      qty,
+      unit: clean(unit),
+      min_qty: min_qty ?? 2
+    });
     if (error) throw error;
+
+    await supabase.from('stock_out').delete().ilike('name', cleanName);
+
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
