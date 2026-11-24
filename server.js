@@ -383,4 +383,113 @@ app.delete('/api/laundry/:id', auth, async (req, res) => {
   const j = await ownJob(req, res); if (!j) return;
   const { error } = await supabase.from('laundry_jobs').delete().eq('id', j.id);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({
+  res.json({ ok: true });
+});
+
+// ---------- Piket & Roommate ----------
+app.get('/api/chores', auth, async (_, res) => {
+  try {
+    const [{ data: chores, error: cErr }, { data: users, error: uErr }] = await Promise.all([
+      supabase.from('chores').select('*').eq('date', today()).order('id'),
+      supabase.from('users').select('id,name,room')
+    ]);
+    if (cErr || uErr) throw cErr || uErr;
+    const uMap = Object.fromEntries((users || []).map(u => [u.id, u]));
+    res.json((chores || []).map(c => ({ ...c, user_name: uMap[c.user_id]?.name || null, room: uMap[c.user_id]?.room || null })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/chores', auth, async (req, res) => {
+  try {
+    if (!req.body.title) return res.status(400).json({ error: 'Nama tugas wajib diisi.' });
+    const { error } = await supabase.from('chores').insert({ title: req.body.title, user_id: req.body.user_id || null, date: today() });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/api/chores/:id', auth, async (req, res) => {
+  try {
+    const { error } = await supabase.from('chores').update({ done: req.body.done ? 1 : 0 }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/rules', auth, async (_, res) => {
+  try {
+    const { data, error } = await supabase.from('rules').select('*').order('id');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/rules', auth, async (req, res) => {
+  try {
+    const { error } = await supabase.from('rules').insert({ text: req.body.text });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------- Notifikasi ----------
+app.get('/api/notifications', auth, async (req, res) => {
+  try {
+    const n = [], rp = v => 'Rp ' + Number(v).toLocaleString('id-ID'), yesterday = new Date(Date.now() - 864e5).toISOString();
+    const [{ data: stocks }, { data: stockOuts }, { data: laundries }, { data: bills }, { data: shares }, { data: users }, { data: chores }, { data: readRows }] = await Promise.all([
+      supabase.from('stock').select('*').order('qty'),
+      supabase.from('stock_out').select('*').gte('at', yesterday).order('id', { ascending: false }),
+      supabase.from('laundry_jobs').select('*').eq('user_id', req.user.id).eq('done', 0).order('pickup_at'),
+      supabase.from('bills').select('*'),
+      supabase.from('bill_shares').select('*'),
+      supabase.from('users').select('id,name'),
+      supabase.from('chores').select('*').eq('user_id', req.user.id).eq('done', 0).eq('date', today()),
+      supabase.from('notif_reads').select('nid').eq('user_id', req.user.id)
+    ]);
+
+    (stocks || []).filter(s => s.qty <= s.min_qty).forEach(s => n.push({
+      id: `stock-${s.id}-${s.qty}`, type: 'stock', level: s.qty === 0 ? 'bad' : 'low', page: 'stok',
+      title: s.qty === 0 ? `${s.name} habis!` : `${s.name} hampir habis`, text: `Tersisa ${s.qty} ${s.unit}. Segera tambahkan ke daftar belanja.`
+    }));
+    (stockOuts || []).forEach(o => n.push({
+      id: `out-${o.id}`, type: 'stock', level: 'bad', final: true, page: 'stok', title: `${o.name} habis!`, text: 'Stok sudah habis. Segera belanja.'
+    }));
+    (laundries || []).forEach(l => {
+      const diff = new Date(l.pickup_at) - Date.now(), name = l.item || 'Laundry', hrs = Math.ceil(diff / 3600e3);
+      if (diff <= 0) n.push({ id: `laundry-${l.id}-ready`, type: 'laundry', level: 'ok', final: true, page: 'laundry', title: `${name} sudah bisa diambil!`, text: 'Waktunya mengambil laundry kamu.' });
+      else if (hrs <= 3) n.push({ id: `laundry-${l.id}-soon`, type: 'laundry', level: 'info', page: 'laundry', title: `${name} siap diambil ${hrs <= 1 ? 'kurang dari 1 jam' : hrs + ' jam'} lagi`, text: 'Siapkan waktu untuk mengambilnya.' });
+    });
+
+    const bMap = Object.fromEntries((bills || []).map(b => [b.id, b])), uMap = Object.fromEntries((users || []).map(u => [u.id, u.name]));
+    (shares || []).filter(s => s.user_id === req.user.id && s.status === 'unpaid').forEach(s => {
+      const b = bMap[s.bill_id]; if (!b) return;
+      const cnt = (shares || []).filter(x => x.bill_id === b.id).length + (b.owner_id != null ? 1 : 0);
+      n.push({ id: `bill-${s.id}`, type: 'bill', level: 'warn', page: 'split', title: `Tagihan ${b.title} belum dibayar`, text: `Bagianmu ${rp(b.amount / cnt)}` });
+    });
+    (shares || []).filter(s => s.status === 'pending' && bMap[s.bill_id]?.owner_id === req.user.id).forEach(s => {
+      const b = bMap[s.bill_id];
+      n.push({ id: `confirm-${s.id}`, type: 'bill', level: 'warn', page: 'split', title: `${uMap[s.user_id] || 'Teman'} sudah bayar ${b.title}`, text: 'Konfirmasi pembayarannya di halaman Split Bill.' });
+    });
+    (chores || []).forEach(c => n.push({ id: `chore-${c.id}`, type: 'chore', level: 'info', page: 'roommate', title: `Piket: ${c.title}`, text: 'Jadwalmu hari ini belum dikerjakan.' }));
+
+    const reads = new Set((readRows || []).map(r => r.nid));
+    res.json(n.map(x => ({ ...x, read: reads.has(x.id) })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/notifications/read', auth, async (req, res) => {
+  try {
+    const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).slice(0, 200);
+    if (ids.length) {
+      const { error } = await supabase.from('notif_reads').upsert(ids.map(id => ({ user_id: req.user.id, nid: String(id).slice(0, 80) })), { onConflict: 'user_id,nid', ignoreDuplicates: true });
+      if (error) throw error;
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+if (!process.env.VERCEL) {
+  app.listen(process.env.PORT || 3000, () => console.log('KosMate jalan di http://localhost:3000'));
+}
+
+module.exports = app;
