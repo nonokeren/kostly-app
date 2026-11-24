@@ -202,7 +202,7 @@ app.put('/api/budget', auth, async (req, res) => {
   try {
     const { data: setting } = await supabase
       .from('settings')
-      .select('id, value')
+      .select('value')
       .eq('key', 'monthly_budget')
       .eq('user_id', req.user.id)
       .maybeSingle();
@@ -215,33 +215,12 @@ app.put('/api/budget', auth, async (req, res) => {
 
     const roundedVal = String(Math.round(v));
 
-    if (setting) {
-      const { error } = await supabase
-        .from('settings')
-        .update({ value: roundedVal })
-        .eq('id', setting.id);
-      if (error) throw error;
-      return res.json({ ok: true, budget: Math.round(v) });
-    }
-
-    let { error } = await supabase
+    const { error } = await supabase
       .from('settings')
-      .insert({ user_id: req.user.id, key: 'monthly_budget', value: roundedVal });
-
-    if (error && /settings_pkey|duplicate key/i.test(error.message || '')) {
-      const { data: lastRow } = await supabase
-        .from('settings')
-        .select('id')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const nextId = (Number(lastRow?.id) || 0) + 1;
-      const retry = await supabase
-        .from('settings')
-        .insert({ id: nextId, user_id: req.user.id, key: 'monthly_budget', value: roundedVal });
-      error = retry.error;
-    }
+      .upsert(
+        { user_id: req.user.id, key: 'monthly_budget', value: roundedVal },
+        { onConflict: 'user_id,key' }
+      );
 
     if (error) throw error;
     res.json({ ok: true, budget: Math.round(v) });
@@ -404,64 +383,4 @@ app.delete('/api/laundry/:id', auth, async (req, res) => {
   const j = await ownJob(req, res); if (!j) return;
   const { error } = await supabase.from('laundry_jobs').delete().eq('id', j.id);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true });
-});
-
-// ---------- Piket & Roommate ----------
-app.get('/api/chores', auth, async (_, res) => {
-  try {
-    const [{ data: chores, error: cErr }, { data: users, error: uErr }] = await Promise.all([
-      supabase.from('chores').select('*').eq('date', today()).order('id'),
-      supabase.from('users').select('id,name,room')
-    ]);
-    if (cErr || uErr) throw cErr || uErr;
-    const uMap = Object.fromEntries((users || []).map(u => [u.id, u]));
-    res.json((chores || []).map(c => ({ ...c, user_name: uMap[c.user_id]?.name || null, room: uMap[c.user_id]?.room || null })));
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/chores', auth, async (req, res) => {
-  try {
-    if (!req.body.title) return res.status(400).json({ error: 'Nama tugas wajib diisi.' });
-    const { error } = await supabase.from('chores').insert({ title: req.body.title, user_id: req.body.user_id || null, date: today() });
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.patch('/api/chores/:id', auth, async (req, res) => {
-  try {
-    const { error } = await supabase.from('chores').update({ done: req.body.done ? 1 : 0 }).eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/api/rules', auth, async (_, res) => {
-  try {
-    const { data, error } = await supabase.from('rules').select('*').order('id');
-    if (error) throw error;
-    res.json(data || []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/rules', auth, async (req, res) => {
-  try {
-    const { error } = await supabase.from('rules').insert({ text: req.body.text });
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ---------- Notifikasi ----------
-app.get('/api/notifications', auth, async (req, res) => {
-  try {
-    const n = [], rp = v => 'Rp ' + Number(v).toLocaleString('id-ID'), yesterday = new Date(Date.now() - 864e5).toISOString();
-    const [{ data: stocks }, { data: stockOuts }, { data: laundries }, { data: bills }, { data: shares }, { data: users }, { data: chores }, { data: readRows }] = await Promise.all([
-      supabase.from('stock').select('*').order('qty'),
-      supabase.from('stock_out').select('*').gte('at', yesterday).order('id', { ascending: false }),
-      supabase.from('laundry_jobs').select('*').eq('user_id', req.user.id).eq('done', 0).order('pickup_at'),
-      supabase.from('bills').select('*'),
-      supabase.from('bill_shares').select('*'),
-      supabase.from('users').select('id,name'),
-      supabase.from('chores').select
+  res.json({
